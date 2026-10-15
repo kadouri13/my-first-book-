@@ -1,3 +1,23 @@
+# Published files
+!.gitattributes
+!.gitignore
+!README.md
+!Deep-Learning-Book.pdf
+
+# Keep all source files, drafts, and assets private (hidden from GitHub)
+chapters/
+figures/
+*.tex
+*.png
+*.jpg
+*.jpeg
+*.txt
+scratch/
+tools/
+work/
+outputs/
+archive_other_pdfs/
+
 # LaTeX build and auxiliary files
 *.aux
 *.log
@@ -12,8 +32,6 @@ preview_*.pdf
 *LinkedIn*.pdf
 *NoRAG*.pdf
 
-
-
 # Python environment & cache
 .venv/
 __pycache__/
@@ -22,9 +40,4 @@ __pycache__/
 # System files
 Thumbs.db
 .DS_Store
-
-# Large archives and temporary folders
-archive_other_pdfs/
 out/
-tools/*.zip
-
