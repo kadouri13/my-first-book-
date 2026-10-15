@@ -9,6 +9,9 @@
 *.bak
 main.pdf
 preview_*.pdf
+*LinkedIn*.pdf
+*NoRAG*.pdf
+
 
 
 # Python environment & cache
