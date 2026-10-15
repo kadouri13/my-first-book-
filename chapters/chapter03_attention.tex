@@ -1,0 +1,261 @@
+% ====================================================================
+% Chapter 3 Continuation: Attention Mechanisms & Image Captioning
+% (Digitized directly from Author Manuscript Pages 90 - 105)
+% ====================================================================
+
+\section{Attention Mechanism for Seq2Seq RNNs}
+
+The first Seq2Seq (Encoder-Decoder) models solved the problem of mapping an input sequence to an output sequence; however, they suffered from a major limitation: the decoder relied only on a single fixed-size context vector (the bottleneck). For long sentences, this vector could not preserve all the information from the source sequence, causing translation and text generation quality to degrade. 
+
+The \textbf{Attention Mechanism} was introduced to overcome this limitation by allowing the decoder to dynamically focus on the most relevant parts of the input sequence during each decoding step.
+
+\subsection{Main Idea of Attention}
+
+Instead of using only one context vector, the decoder can look at all encoder hidden states whenever it generates a new output word. Instead of $c = h_m$, we compute a different context vector for every decoder step.
+
+So,
+\begin{itemize}
+    \item Encoder stores all hidden states.
+    \item Decoder decides which hidden states are most useful.
+    \item The decision is made through attention weights.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{3-RNN/graph1_seq2seq.png}
+\caption{Encoder-Decoder RNN (Seq2Seq) Architecture and Sequence-to-Sequence Performance comparison showing performance degradation without attention versus sustained quality with attention.}
+\label{fig:seq2seq_attention_comparison}
+\end{figure}
+
+\subsection{Calculate Attention Step by Step}
+
+\begin{itemize}
+    \item \textbf{Without attention:} The final state is incapable of remembering a long sequence.
+    \item \textbf{With attention:} Seq2Seq model does not forget source input and the decoder knows where to focus.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{3-RNN/graph2_attention_step_by_step.png}
+\caption{Step-by-Step Calculation of Attention: Encoder states $h_i$, Decoder state $S_{t-1}$, Linear Projections, Alignment Score $e_{ti}$, Softmax Attention Weight $\alpha_{ti}$, and Context Vector $c_t$.}
+\label{fig:attention_step_by_step_diagram}
+\end{figure}
+
+This vector $c_t$ is a focused snapshot of the input sequence; it acts as a dynamic summary that changes for every word the decoder generates.
+
+\textbf{Repeat for every output word:}
+Attention is recomputed at every decoder time step:
+\begin{enumerate}
+    \item Compute alignment
+    \item Compute attention weights
+    \item Compute context vector $c_t$
+\end{enumerate}
+
+\begin{propertybox}[Numerical Example of Attention Weights]
+Suppose alignment scores are $e_1 = 1, e_2 = 2, e_3 = 3$.
+Applying Softmax normalization:
+\begin{equation}
+e_1 = \frac{2.7}{30}, \quad e_2 = \frac{7.3}{30}, \quad e_3 = \frac{20}{30}
+\end{equation}
+resulting in attention weights:
+\begin{equation}
+\alpha_1 = 0.09, \quad \alpha_2 = 0.20, \quad \alpha_3 = 0.665
+\end{equation}
+The context vector is computed as:
+\begin{equation}
+C = \alpha_1 h_1 + \alpha_2 h_2 + \alpha_3 h_3
+\end{equation}
+Here, state $h_3$ receives the highest weight ($\alpha_3 = 0.665$), receiving the most attention.
+\end{propertybox}
+
+\subsection{Advantages \& Limitations of Attention}
+
+\begin{advbox}[Advantages]
+\begin{itemize}
+    \item Eliminates the fixed-size bottleneck.
+    \item Handles long input sequences much better.
+    \item Produces better translations and generated text.
+    \item Learns where to focus automatically.
+    \item Generates a different context vector for each output word.
+    \item Greatly improves Seq2Seq performance.
+\end{itemize}
+\end{advbox}
+
+\begin{advbox}[Limitations]
+\begin{itemize}
+    \item Higher computational cost.
+    \item Increased memory usage.
+    \item Attention weights must be recomputed for every decoder step.
+    \item Complexity grows with both input and output sequence lengths.
+\end{itemize}
+\end{advbox}
+
+\begin{propertybox}[Summary of Attention Mechanism]
+The Attention Mechanism enhances the classical Encoder-Decoder architecture by allowing the decoder to access all encoder hidden states instead of relying on a single bottleneck vector. At each decoding step, the decoder computes alignment scores, converts them into attention weights using Softmax, forms a context vector as a weighted sum of the encoder hidden states, and uses this context to generate the next output token. Because a new context vector is computed for every output step, the model learns where to focus in the input sequence, greatly improving performance on long sequences at the cost of increased computational complexity.
+\end{propertybox}
+
+\section{Self-Attention in RNN}
+
+\textbf{Self-Attention in RNN} is a neural mechanism that enables a model to determine which parts of its own input sequence are the most relevant when computing the representation of the current element. Instead of relying only on the previous hidden state, the model compares the current hidden state with all previous hidden states and selectively focuses on the most informative ones.
+
+In RNNs, self-attention improves the network's ability to model long-range dependencies by allowing it to retrieve information from any previous time step.
+
+\begin{itemize}
+    \item \textbf{In Attention:} The decoder looks at the encoder's hidden states.
+    \item \textbf{In Self-Attention:} The model looks at previous decoder hidden states, meaning the decoder is attending to its own previous hidden states, in addition to (or instead of) attending to the encoder.
+\end{itemize}
+
+\textbf{Decoder Self-Attention:} \textit{"Which words have I already generated that are important for predicting the next word?"}
+
+\textit{Example:} \textit{"Mohamed likes studying at night"} (where \textit{studying} attends back to \textit{Mohamed}).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{3-RNN/graph3_decoder.png}
+\caption{Decoder architecture integrating self-attention context vectors $C_1, C_2, C_3, C_4$ across hidden states $h_1, h_2, h_3, h_4$.}
+\label{fig:decoder_self_attention_graph}
+\end{figure}
+
+The updated state and context vectors are formulated as:
+\begin{equation}
+h_4 = \tanh\left(A \cdot \begin{bmatrix} x_4 \\ C_3 \end{bmatrix} + b\right)
+\end{equation}
+\begin{equation}
+\text{weights: } \alpha_i = \operatorname{align}(h_i, h_4)
+\end{equation}
+\begin{equation}
+C_4 = \alpha_1 h_1 + \alpha_2 h_2 + \alpha_3 h_3 + \alpha_4 h_4 \quad \text{(repeated for every new generated word)}
+\end{equation}
+
+\begin{propertybox}[Historical Literature References]
+\textbf{Notice:} The original self-attention paper uses LSTM networks. Two foundational papers reference Attention and Self-Attention:
+\begin{enumerate}
+    \item \textbf{Bahdanau, Cho \& Bengio (2015):} Encoder-Decoder Attention ($\text{Query} = \text{decoder state}$, $\text{Keys}/\text{Values} = \text{encoder states}$ across two different sequences).
+    \item \textbf{Cheng, Dong \& Lapata (2016):} \textit{"Long Short-Term Memory Network for Machine Reading"}, where the Query, Keys, and Values all come from the same sequence (a single RNN attending to its own history). This is the direct conceptual ancestor of Transformer self-attention.
+\end{enumerate}
+\end{propertybox}
+
+\subsection{Self-Attention Mechanism Step-by-Step}
+
+\begin{align}
+\tilde{h}_t &= \tanh(A[h_{t-1}, x_t] + b) \\
+e_i &= \operatorname{align}(\tilde{h}_t, h_i) \quad \text{for } i = 1, \dots, t \\
+e_i &= v^T \tanh(W_1 \tilde{h}_t + W_2 h_i) \\
+\alpha_i &= \operatorname{softmax}(e_i) \\
+c_t &= \sum_{i=1}^t \alpha_i h_i \quad \text{(context vector, repeat until EOS)}
+\end{align}
+
+\begin{advbox}[Advantages of Self-Attention in RNNs]
+\begin{itemize}
+    \item Reduces forgetting of long-term information.
+    \item Allows direct access to earlier hidden states.
+    \item Learns automatically where to focus.
+    \item Improves the representation of long sequences.
+    \item Serves as a bridge between classical RNNs and modern Transformer architectures.
+\end{itemize}
+\end{advbox}
+
+\begin{advbox}[Limitations of Self-Attention in RNNs]
+\begin{itemize}
+    \item Computational complexity increases because attention must be computed at every time step.
+    \item All hidden states must be stored in memory.
+    \item Still processes the sequence sequentially, unlike Transformers which compute self-attention in parallel.
+\end{itemize}
+\end{advbox}
+
+\section{Image Caption Generation Architecture (CNN-LSTM Model)}
+
+\textbf{Project: Image Caption Generation using CNN and LSTM}
+
+Image Captioning is the task of automatically generating a natural language description for an image. Image captioning combines two major fields:
+\begin{itemize}
+    \item \textbf{Computer Vision:} to understand the content of the image.
+    \item \textbf{Natural Language Processing (NLP):} to generate the describing sentence.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{3-RNN/graph4_image_captioning.png}
+\caption{Complete Image Caption Generation Multimodal System Architecture.}
+\label{fig:image_captioning_architecture_multimodal}
+\end{figure}
+
+\begin{propertybox}[Dataset: Flickr8K]
+\textbf{Characteristics:}
+\begin{itemize}
+    \item Approximately $8,000$ images.
+    \item Every image has $5$ different captions ($30,000$ total captions).
+    \item Around $6,000$ images are used for training.
+\end{itemize}
+\end{propertybox}
+
+\subsection{Pipeline Steps}
+
+\begin{enumerate}
+    \item \textbf{Step 1: Feature Extraction (Transfer Learning)} \\
+    Instead of training a CNN from scratch (which requires millions of images), the project uses a pretrained VGG16 network via Transfer Learning. The process reuses a model that has already learned rich visual representations from ImageNet.
+    
+    The final classification layer in VGG16 is removed, leaving a $4096$-dimensional feature vector that summarizes the visual content of the image.
+
+    \item \textbf{Step 2: Captions Processing} \\
+    Captions undergo preprocessing:
+    \begin{itemize}
+        \item Add Special Tokens: \texttt{startseq A child in a pink dress endseq} to indicate start and end boundaries.
+        \item Tokenization: \texttt{['startseq', 'A', 'child', 'in', 'a', 'pink', 'dress', 'endseq']}
+        \item Integer Encoding: \texttt{startseq} $\to 2$, \texttt{a} $\to 1$, \texttt{child} $\to 43$, \texttt{pink} $\to 90$, \texttt{dress} $\to 172$, \dots, \texttt{endseq} $\to 3$. The caption becomes $[2, 1, 43, 90, 172, \dots, 3]$.
+    \end{itemize}
+
+    \item \textbf{Step 3: Create Training Samples} \\
+    The network learns next-word prediction:
+    \begin{table}[htbp]
+    \centering
+    \begin{tabular}{l | l}
+    \hline
+    \textbf{Input (Partial Caption)} & \textbf{Target (Next Word)} \\
+    \hline
+    \texttt{startseq} & \texttt{a} \\
+    \texttt{startseq a} & \texttt{cat} \\
+    \texttt{startseq a cat} & \texttt{sat} \\
+    \texttt{startseq a cat sat} & \texttt{on} \\
+    \vdots & \vdots \\
+    \hline
+    \end{tabular}
+    \caption{Training samples pair partial sequence input to next target word. Each sample includes the same image feature vector from VGG16.}
+    \end{table}
+
+    \item \textbf{Step 4: Padding Sequences} \\
+    Sequences have different lengths. To create mini-batches, they are padded with zero tokens to the maximum sentence length, e.g.:
+    \begin{equation}
+    [\text{Hi}, \text{how}, \text{are}, \text{you}, \langle \text{Pad} \rangle, \langle \text{Pad} \rangle, \langle \text{Pad} \rangle] \implies [2, 1, 43, 50, 0, 0, 0]
+    \end{equation}
+
+    \item \textbf{Step 5: One-Hot Encoding} \\
+    The target word is converted into a One-Hot vector over the vocabulary.
+
+    \item \textbf{Step 6: Build the Neural Network Architecture} \\
+    The dual-branch architecture connects as follows:
+    \begin{itemize}
+        \item \textbf{Image Branch:} Raw Image $\to$ VGG16 Features ($4096$) $\to$ Dropout $\to$ Dense ($256$).
+        \item \textbf{Text Branch:} Previous Words $\to$ Embedding Layer $\to$ LSTM Network ($256$).
+    \end{itemize}
+    The outputs of the two branches ($256$ dimensions each) are then added (or concatenated), followed by additional dense layers and a final Softmax layer over the vocabulary.
+
+    \item \textbf{Step 7: Training} \\
+    Each training sample consists of $(x_1, x_2, y)$, where $x_1$ is the image feature vector, $x_2$ is the partial caption sequence, and $y$ is the target next word. The network minimizes Categorical Cross-Entropy loss.
+\end{enumerate}
+
+\subsection{Caption Generation (Inference Pipeline)}
+
+\begin{enumerate}
+    \item Input an unlabelled image.
+    \item Extract its feature vector using VGG16.
+    \item Initialize the caption sequence with \texttt{startseq}.
+    \item Feed the image features and current partial caption into the network.
+    \item Predict the probability distribution over the next word.
+    \item Append the predicted word to the caption.
+    \item Repeat steps 4--6 until \texttt{endseq} is predicted or maximum caption length is reached.
+\end{enumerate}
+
+\begin{propertybox}[Modern Perspective]
+\textbf{Notice:} Modern captioning systems often replace LSTMs with Transformers and add visual attention mechanisms to dynamically focus on specific spatial image regions during decoding.
+\end{propertybox}

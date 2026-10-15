@@ -1,0 +1,605 @@
+\chapter{Transformers}
+
+\section{Motivation and Background}
+Before 2017, almost every model for sequence processing relied on recurrent neural network (RNN) architectures. The standard sequence-to-sequence structure used an encoder RNN to process the input and compress it into a fixed-length context vector, which was then passed to a decoder:
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1.1cm, 
+    auto, 
+    >=stealth, 
+    font=\sffamily\bfseries\small,
+    mainnode/.style={draw=primaryblue, fill=boxbg, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    secnode/.style={draw=secondaryblue, fill=secondaryblue!12, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    graynode/.style={draw=warmgray, fill=lightbg, text=ink, rounded corners=4pt, inner sep=6pt, line width=0.8pt}
+]
+    \node [mainnode] (input1) {Input};
+    \node [secnode, right=of input1] (enc1) {Encoder RNN};
+    \node [graynode, right=of enc1] (ctx) {Context Vector};
+    \node [secnode, right=of ctx] (dec1) {Decoder};
+    \node [mainnode, right=of dec1] (out1) {Output};
+    
+    \draw [->, line width=1.1pt, primaryblue] (input1) -- (enc1);
+    \draw [->, line width=1.1pt, primaryblue] (enc1) -- (ctx);
+    \draw [->, line width=1.1pt, primaryblue] (ctx) -- (dec1);
+    \draw [->, line width=1.1pt, primaryblue] (dec1) -- (out1);
+\end{tikzpicture}
+\end{center}
+
+Later, attention mechanisms were introduced to connect the encoder and decoder directly:
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1.1cm, 
+    auto, 
+    >=stealth, 
+    font=\sffamily\bfseries\small,
+    mainnode/.style={draw=primaryblue, fill=boxbg, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    secnode/.style={draw=secondaryblue, fill=secondaryblue!12, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    attnode/.style={draw=accentred, fill=accentred!12, text=accentred!90!black, rounded corners=4pt, inner sep=6pt, line width=0.8pt}
+]
+    \node [mainnode] (input2) {Input};
+    \node [secnode, right=of input2] (enc2) {Encoder RNN};
+    \node [attnode, right=of enc2] (attn) {Attention};
+    \node [secnode, right=of attn] (dec2) {Decoder RNN};
+    
+    \draw [->, line width=1.1pt, primaryblue] (input2) -- (enc2);
+    \draw [->, line width=1.1pt, primaryblue] (enc2) -- (attn);
+    \draw [->, line width=1.1pt, primaryblue] (attn) -- (dec2);
+\end{tikzpicture}
+\end{center}
+
+Attention solved one major problem: the encoder no longer compresses the whole sentence into a single vector. Instead, the decoder could look back at all encoder hidden states. However, another huge problem remained.
+
+\subsection{Limitations of Recurrent Architectures}
+\textbf{Problem 1: Sequential Computation} \\
+Each hidden state depends sequentially on the previous one:
+\begin{equation}
+h_t = f(h_{t-1}, x_t)
+\end{equation}
+This destroys parallelism. GPU utilization becomes poor, and training becomes exceptionally slow.
+
+\textbf{Problem 2: Long Dependency} \\
+Consider the sentence: \textit{“The animal didn't cross the street because \textbf{it} was too tired”}. \\
+To understand “\textbf{it}”, the model must remember “animal” from dozens of words ago. Although LSTMs can model longer dependencies than vanilla RNNs, learning very long-range dependencies can still be challenging. Although attention helps, the underlying computation remains strictly sequential.
+
+\textbf{Problem 3: Information Bottleneck} \\
+Even with attention, the encoder still has to build hidden states sequentially. Earlier mistakes propagate forward, later words depend on previous computations, and errors accumulate across layers.
+
+\section{Attention and Self-Attention}
+This led to a fundamental question: \textit{Do we really need recurrent neural networks?} \\
+The answer was to remove recurrence from the sequence-processing architecture while retaining attention. This allows the tokens of an input sequence to be processed in parallel during training:
+\begin{equation*}
+\text{input Embeddings} \longrightarrow \text{Self-Attention} \longrightarrow \text{Feed Forward}
+\end{equation*}
+
+How to remove RNN while keeping attention?
+
+\subsection{Attention Without RNN}
+Encoder's input: $[x_1, x_2, x_3, \dots, x_m]$ \\
+Decoder's input: $[x_1', x_2', x_3', \dots, x_t']$ \\
+Keys and values are based on encoder's inputs $x_1, x_2, \dots, x_m$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/fig_5_attention_flow_pg121.png}
+    \caption{Detailed computation flow of attention mechanisms operating over encoder and decoder inputs.}
+    \label{fig:attention_flow_pg121}
+\end{figure}
+
+Key: $K_i = W_K x_i$ \\
+Value: $V_i = W_V x_i$ \\
+Query: $q_j = W_Q x_j'$
+
+Compute weights:
+\begin{equation}
+\alpha_{ij} = \operatorname{softmax}_i\left(\frac{q_j K_i^T}{\sqrt{d_k}}\right)
+\end{equation}
+
+Compute Context Vector:
+\begin{equation}
+c_j = \sum_i \alpha_{ij} V_i, \quad C = [c_1, c_2, c_3, \dots, c_T]
+\end{equation}
+
+So Attention Layer: $C = \text{Attn}(x, x')$
+\begin{itemize}
+    \item Encoder inputs: $[x_1, x_2, x_3, \dots, x_m]$
+    \item Decoder inputs: $[x_1', x_2', x_3', \dots, x_t']$
+    \item Parameters: $W_Q, W_K, W_V$
+\end{itemize}
+
+Classical attention asks: \textit{Which encoder hidden states are important for this decoder state?} \\
+Instead of directly comparing $h_i$ and $s_i$, we first project them into another space:
+\begin{align}
+q_t &= W_Q \cdot s_t \quad \text{(Query, obtained from decoder)} \\
+K_i &= W_K \cdot h_i \quad \text{(Key, obtained from encoder)} \\
+V_i &= W_V \cdot h_i \quad \text{(Value, obtained from encoder)}
+\end{align}
+
+\subsection{Why Do We Need \texorpdfstring{$Q, K, and V$}{Q, K, and V}?}
+Why not compare with $h_i$ directly? Because different tasks need different notions of similarity. \\
+For example, suppose “apple” sometimes means fruit, sometimes company.
+\begin{itemize}
+    \item The model learns $W_K$ to encode meaning.
+    \item The model learns $W_Q$ to encode what we are looking for.
+    \item The model learns $W_V$ to encode the information we finally want.
+\end{itemize}
+
+So Old Attention: Keys come from Encoder, Queries come from Decoder. \\
+So let's come to the brilliant insight: \textit{Where do Queries really come from? Why not create them directly from the input?}
+
+Instead of $q = W_Q s_i$, let's do:
+\begin{align}
+q &= W_Q x_i \quad \text{in the encoder} \\
+K &= W_K x_i \\
+V &= W_V x_i
+\end{align}
+
+Now: everything comes from the input itself:
+\begin{itemize}
+    \item No decoder state needed
+    \item No encoder state needed
+    \item Only embeddings
+\end{itemize}
+
+So that's what we call: \textbf{Self-Attention}.
+
+In Self-Attention Layer: $C = \text{Attn}(X, X)$ \\
+Input: $[x_1, x_2, \dots, x_m]$ \\
+Parameters: $W_Q, W_K, W_V$
+
+\begin{equation}
+\alpha_i = \text{Softmax}(K^T q_i) \in \mathbb{R}^m
+\end{equation}
+\begin{equation}
+c_i = V \cdot \alpha_i
+\end{equation}
+Output of Self-Attention layer: $[c_1, c_2, \dots, c_m]$.
+
+This is the heart of the Transformer: Each word asks: \textit{Which other words help me understand myself?} \\
+Example: “The animal didn't cross the street because it was tired”. \\
+Token “it” creates Query and compares itself with every Key (e.g. animal: 0.8, street: 0.1 \dots). Output becomes mostly animal. This is exactly what Self-Attention computes.
+
+\subsection{Mathematical Derivations}
+Let $X = \begin{bmatrix} x_1 \\ x_2 \\ x_3 \\ \vdots \\ x_n \end{bmatrix}$. Project:
+\begin{equation}
+Q = X W_Q, \quad K = X W_K, \quad V = X W_V
+\end{equation}
+Similarity matrix: $S = Q K^T$ \\
+Normalize: $A = \text{Softmax}(S)$ \\
+Output: $C = A \cdot V$
+
+The Full Equation:
+\begin{equation}
+\text{Attn}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V
+\end{equation}
+
+Summary:
+\begin{itemize}
+    \item Classical attention lets a decoder query encoder representations.
+    \item By generating Queries, Keys, and Values directly from the input embedding, we eliminate the need for recurrent hidden states.
+    \item This leads to self-attention, where every token can attend to every other token in parallel.
+    \item Self-attention becomes the fundamental building block of the Transformer.
+    \item (Attention was originally developed for Seq2Seq RNN models, and self-attention for all RNN models, not necessarily Seq2Seq models).
+\end{itemize}
+
+\section{The "Attention Is All You Need" Paper Architecture}
+The “Attention Is All You Need” paper, published by Vaswani et al. in 2017, introduced the Transformer, a novel neural network architecture that fundamentally changed sequence modeling. Unlike Seq2Seq models based on RNNs, LSTMs, and GRUs, the Transformer completely eliminates recurrence and relies solely on attention mechanisms to model dependencies between tokens. This design enables full parallel computation during training, significantly improves the modeling of long-range dependencies, and achieves superior computational efficiency.
+
+The Transformer is built upon several key innovations, including Scaled Dot-Product Attention, Multi-Head Attention, Positional Encoding, Residual Connections, Layer Normalization, and Position-wise Feed-Forward Networks. These components are organized into an encoder-decoder architecture composed of stacked layers that learn increasingly rich contextual representations.
+
+The Transformer has become the foundation of nearly all modern deep learning models for language, vision, speech, and multimodal learning: BERT, GPT, ViT, and LLMs.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{figures/fig_5_transformer_architecture_pg128.png}
+    \caption{The complete Transformer encoder-decoder model architecture.}
+    \label{fig:transformer_architecture}
+\end{figure}
+
+\section{From Single-Head to Multi-Head Attention}
+\subsection{Single-Head Self-Attention}
+The Transformer begins with a single self-attention mechanism in which every token simultaneously acts as a query, key, and value. Given an input sequence $X \in \mathbb{R}^{n \times d_{model}}$, three learned linear projections generate the Query, Key, and Value matrices:
+\begin{equation}
+Q = X W_Q, \quad K = X W_K, \quad V = X W_V
+\end{equation}
+where $W_Q, W_K \in \mathbb{R}^{d_{model} \times d_k}$, and $W_V \in \mathbb{R}^{d_{model} \times d_v}$.
+
+\begin{equation}
+\text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V
+\end{equation}
+where $Q K^T \in \mathbb{R}^{n \times n}$ contains the similarity between every pair of tokens.
+
+\subsection{Why Divide by \texorpdfstring{$\sqrt{d_k}$}{sqrt(dk)}?}
+The original Transformer divides the attention score by $\sqrt{d_k}$. Before applying Softmax, without this scaling factor, the variance of the dot products grows proportionally to $d_k$, causing Softmax to become highly saturated. Saturated probabilities produce extremely small gradients, slowing optimization and making training unstable. Dividing by $\sqrt{d_k}$ normalizes the variance of the attention scores, preserving stable gradients throughout training.
+
+\begin{examplebox}[Numerical Comparison of Softmax Scaling]
+Without scaling:
+\begin{equation}
+\text{Softmax}([16, 8, 0]) = [0.9997, 0.0003, 0.0000]
+\end{equation}
+The distribution is almost one-hot. The gradient of the Softmax $= 0.9997(1 - 0.9997) \approx 0.0003$. This is extremely small, hence learning is slow and gradients nearly vanish.
+
+With scaling (e.g., dividing by $\sqrt{d_k} = \sqrt{64} = 8$):
+\begin{equation}
+\text{Softmax}([2, 1, 0]) = [0.665, 0.245, 0.090]
+\end{equation}
+Now the probabilities are much smoother: $0.665(1 - 0.665) = 0.223$. Training is therefore much more stable because useful gradients continue flowing through the network.
+\end{examplebox}
+
+\subsection{Multi-Head Attention}
+A single attention head can learn only one similarity function at a time. To allow the model to capture multiple semantic relationships simultaneously, the Transformer employs Multi-Head Attention. Instead of learning one projection set, the model learns $h$ independent projection sets:
+\begin{equation}
+W_Q^i, W_K^i, W_V^i \quad \text{for } i = 1, \dots, h
+\end{equation}
+
+Each head computes $\text{head}_i = \text{Attention}(Q_i, K_i, V_i)$. \\
+The outputs are concatenated: $H = \text{Concat}(\text{head}_1, \text{head}_2, \dots, \text{head}_h)$ and projected back into the model space:
+\begin{equation}
+\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, \text{head}_2, \dots, \text{head}_h) W_O
+\end{equation}
+where $W_O \in \mathbb{R}^{h d_v \times d_{model}}$.
+
+Example: $d_{model} = 512$ and $h = 8$, so $d_k = d_v = \frac{512}{8} = 64$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.92\textwidth]{figures/fig_5_multi_head_attention_pg132.png}
+    \caption{Structural breakdown and linear projection flow in Multi-Head Attention.}
+    \label{fig:multi_head_attention}
+\end{figure}
+
+\section{Positional Encoding}
+Self-attention is permutation invariant because attention depends only on pairwise similarities and contains no information about token order. Consequently, positional information must be explicitly injected into the input representation.
+
+The Transformer adds positional encodings directly to the token embeddings:
+\begin{equation}
+X' = X + PE
+\end{equation}
+where $X \in \mathbb{R}^{n \times d_{model}}$ and $PE \in \mathbb{R}^{n \times d_{model}}$.
+
+Instead of learning position vectors, Transformer uses deterministic sinusoidal functions. For every position $pos$ and embedding dimension $i$:
+\begin{align}
+PE_{(pos, 2i)} &= \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right) \\
+PE_{(pos, 2i+1)} &= \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right)
+\end{align}
+\begin{itemize}
+    \item The even dimension: Use sinus function
+    \item The odd dimension: Use cosinus function
+\end{itemize}
+
+Using sinusoidal functions provides unique positional representations while enabling the model to generalize to sequence lengths not observed during training, because nearby positions generate nearby vectors, and relative distances can also be inferred through linear operations.
+
+\subsection{Why Different Frequencies?}
+$10000^{2i/d_{model}}$ changes with the embedding dimension:
+\begin{itemize}
+    \item Low-dimension components have short wavelengths and vary rapidly with position.
+    \item High-dimension components have long wavelengths and vary slowly.
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{figures/fig_5_positional_encoding_curves_pg134.png}
+    \caption{Superposition of sinusoidal curves across embedding dimensions.}
+    \label{fig:positional_curves}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.88\textwidth]{figures/fig_5_positional_encoding_matrix_pg134.png}
+    \caption{Structure of the Positional Encoding Matrix $PE \in \mathbb{R}^{N \times d}$.}
+    \label{fig:positional_matrix}
+\end{figure}
+
+Example: $d_{model} = 8, pos = 3$. \\
+The positional encoding vector becomes:
+\begin{equation}
+PE(3) = \left[ \sin(3), \cos(3), \sin(3/10), \cos(3/10), \sin(3/100), \cos(3/100), \sin(3/1000), \cos(3/1000) \right]
+\end{equation}
+Each pair of dimensions oscillates at a different frequency. Thus every position obtains a distinct vector.
+
+\subsection{Why Sine and Cosine?}
+\begin{enumerate}
+    \item \textbf{Unique Representation}: Each position produces a different combination of sine and cosine values ($PE(pos_1) \neq PE(pos_2)$). For different positions, the model can distinguish every token location.
+    \item \textbf{Smoothness}: Unlike one-hot position vectors, neighboring positions generate similar vectors. For example, $PE(20)$ is much closer to $PE(21)$ than $PE(200)$. This smooth transition makes optimization easier.
+    \item \textbf{Relative Position Information} (The most important property): \\
+    Using trigonometric identities:
+    \begin{align}
+    \sin(a+b) &= \sin(a)\cos(b) + \cos(a)\sin(b) \\
+    \cos(a+b) &= \cos(a)\cos(b) - \sin(a)\sin(b)
+    \end{align}
+    Therefore, $PE(pos+k)$ can be expressed as a linear transformation of $PE(pos)$. This means the model can learn relationships such as next word and previous token.
+    \item \textbf{Extrapolation to Longer Sequences}: Because the positional encoding is generated by a mathematical formula rather than learned parameters, it can be computed for positions beyond the training sequence length; however, successful extrapolation is not guaranteed.
+\end{enumerate}
+
+\subsection{Why Use Addition Instead of Concatenation?}
+$X' = X + PE$. If concatenation were used instead, the dimensionality would increase (e.g. from 512 to 1024), doubling the size of the projection matrices and significantly increasing the number of parameters and computational cost.
+
+Positional encoding enables the Transformer to model sequence order despite processing all tokens in parallel. By adding deterministic sinusoidal vectors to the input embeddings, the model receives explicit information about token positions while preserving the embedding dimensionality. The use of multiple sine and cosine frequencies produces unique, smooth, and mathematically structured representations that allow the model to infer both absolute position and relative distance. These encodings can be computed for positions beyond the training sequence length, although successful extrapolation is not guaranteed.
+
+Although this method is elegant and parameter-free, it is rarely used in modern LLMs. Today, the most widely adopted technique is Rotary Position Embedding (RoPE), introduced in 2021. RoPE incorporates positional information by rotating the Query and Key vectors before computing attention, allowing the model to naturally capture relative positional relationships and perform better on long-context sequences.
+
+\section{Rotary Position Embedding (RoPE)}
+\begin{center}
+\begin{tikzpicture}[
+    node distance=1.2cm, 
+    auto, 
+    >=stealth, 
+    font=\sffamily\bfseries\small,
+    mainnode/.style={draw=primaryblue, fill=boxbg, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    secnode/.style={draw=secondaryblue, fill=secondaryblue!12, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    rotnode/.style={draw=accentred, fill=accentred!12, text=accentred!90!black, rounded corners=4pt, inner sep=6pt, line width=0.8pt},
+    outnode/.style={draw=primaryblue, fill=boxbg, text=primaryblue, rounded corners=4pt, inner sep=6pt, line width=0.8pt}
+]
+    \node [mainnode] (emb) {Embedding};
+    \node [secnode, right=of emb] (proj) {Linear Projection};
+    \node [mainnode, above right=0.3cm and 0.8cm of proj] (Q) {$\mathbf{Q}$};
+    \node [mainnode, below right=0.3cm and 0.8cm of proj] (K) {$\mathbf{K}$};
+    \node [rotnode, right=of Q] (rotQ) {Rotate $\mathbf{Q}'$};
+    \node [rotnode, right=of K] (rotK) {Rotate $\mathbf{K}'$};
+    \node [outnode, right=1.6cm of rotQ, yshift=-0.8cm] (attn) {$\text{Softmax}\left(\frac{\mathbf{Q}' \mathbf{K}'^T}{\sqrt{d_k}}\right)$};
+    
+    \draw [->, line width=1.1pt, primaryblue] (emb) -- (proj);
+    \draw [->, line width=1.1pt, primaryblue] (proj) |- (Q);
+    \draw [->, line width=1.1pt, primaryblue] (proj) |- (K);
+    \draw [->, line width=1.1pt, primaryblue] (Q) -- (rotQ);
+    \draw [->, line width=1.1pt, primaryblue] (K) -- (rotK);
+    \draw [->, line width=1.1pt, primaryblue] (rotQ) -| (attn);
+    \draw [->, line width=1.1pt, primaryblue] (rotK) -| (attn);
+\end{tikzpicture}
+\end{center}
+
+Example: position $p = 3$, angle $\theta = 30^\circ$, Query vector $Q = \begin{bmatrix} 2 \\ 1 \end{bmatrix}$. \\
+The rotation matrix is:
+\begin{equation}
+R = \begin{bmatrix} \cos 30^\circ & -\sin 30^\circ \\ \sin 30^\circ & \cos 30^\circ \end{bmatrix} = \begin{bmatrix} 0.866 & -0.5 \\ 0.5 & 0.866 \end{bmatrix}
+\end{equation}
+
+Multiply:
+\begin{equation}
+Q' = R Q = \begin{bmatrix} 0.866 & -0.5 \\ 0.5 & 0.866 \end{bmatrix} \begin{bmatrix} 2 \\ 1 \end{bmatrix} = \begin{bmatrix} 1.232 \\ 1.866 \end{bmatrix}
+\end{equation}
+The rotation preserves the vector's norm while incorporating position-dependent information.
+
+\begin{advbox}[Advantages of RoPE]
+\begin{itemize}
+    \item Captures relative positions naturally
+    \item Better performance on long-context tasks
+    \item No additional trainable parameters
+    \item Computationally efficient
+    \item Used in most modern LLMs (e.g., LLaMA, Qwen, Gemma, DeepSeek)
+\end{itemize}
+\end{advbox}
+
+\section{Position-wise Feed Forward Network}
+Forward Network Transforms each token independently:
+\begin{equation}
+\text{FFN}(x) = W_2 \sigma(W_1 x + b_1) + b_2
+\end{equation}
+Dimension flow: $512 \to 2048 \to 512$. \\
+$W_1 \in \mathbb{R}^{512 \times 2048}, \quad W_2 \in \mathbb{R}^{2048 \times 512}$.
+
+\section{Residual Connections And Add \& Norm}
+Deep neural networks become increasingly difficult to optimize because gradients vanish as depth increases. To alleviate this problem, every sub-layer employs a residual connection:
+\begin{equation}
+y = x + F(x)
+\end{equation}
+allowing gradients to flow directly through identity mappings.
+
+Immediately after the residual addition, Layer Normalization is applied:
+\begin{equation}
+\text{LayerNorm}(x + F(x))
+\end{equation}
+forming the well-known Add \& Norm Operation.
+
+Residual Connections improve optimization, while normalization stabilizes the distribution of intermediate activations, accelerates convergence, and reduces sensitivity to parameter initialization.
+
+\subsection{Layer Normalization}
+Unlike Batch Normalization, which computes statistics across the batch dimension, Layer Normalization normalizes each token independently across its feature dimensions:
+\begin{equation}
+\text{LayerNorm}(x) = \gamma \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta
+\end{equation}
+This independence from batch statistics makes Layer Normalization particularly suitable for variable-length sequences and autoregressive inference.
+
+\section{Transformer Encoder}
+The primary objective of the encoder is not generate output tokens. Instead, its role is to transform the input sequence into a set of context-aware representation that capture the semantic and syntactic relationships among all tokens. These contextual representations serve as the knowledge base from which the decoder later generates the target sequence.
+
+Unlike an RNN encoder, which compresses information sequentially into hidden states, the Transformer encoder processes the entire sequence simultaneously through stacked attention layers, allowing every token to directly exchange information with every other token.
+
+The output vector now contains contextual information from the entire sentence rather than representing only the corresponding token.
+
+The output has exactly the same dimensions as the input:
+\begin{equation}
+X \in \mathbb{R}^{n \times 512} \longrightarrow U \in \mathbb{R}^{n \times 512}
+\end{equation}
+$n$: sequence length (tokens).
+
+\subsection{Encoder Workflow and Architecture}
+\textbf{1. Input to encoder:}
+\begin{enumerate}
+    \item Tokenization
+    \item Embedding
+    \item Positional Encoding
+\end{enumerate}
+
+Therefore the encoder receives:
+\begin{equation}
+X = \begin{bmatrix} x_1 \\ x_2 \\ \vdots \\ x_n \end{bmatrix} \in \mathbb{R}^{n \times 512}
+\end{equation}
+
+\textbf{2. Encoder Architecture:} \\
+The original Transformer stacks $N = 6$ identical encoder blocks. Each block has exactly the same architecture but different learned parameters:
+\begin{align}
+U^{(0)} &= X \\
+U^{(\ell)} &= \text{Encoder Block}^{(\ell)}\left(U^{(\ell-1)}\right), \quad \ell = 1, \dots, 6 \\
+\text{The final encoder output is } U &= U^{(6)}
+\end{align}
+
+\subsection{Encoder Block Operations}
+Each encoder block performs four operations sequentially: \\
+$\text{Multi-Head Self-Attention} \longrightarrow \text{Add \& Norm} \longrightarrow \text{Feed Forward Network} \longrightarrow \text{Add \& Norm}$.
+
+Although the dimensionality never changes, the representation becomes increasingly richer after every block.
+
+\textbf{Step 1: Multi-Head Self-Attention} \\
+The block first compute:
+\begin{equation}
+Q = X W_Q, \quad K = X W_K, \quad V = X W_V
+\end{equation}
+Attention produces:
+\begin{equation}
+H = \text{MultiHead}(Q, K, V)
+\end{equation}
+Dimension: $X \in \mathbb{R}^{n \times 512} \implies H \in \mathbb{R}^{n \times 512}$. \\
+Every token now contains information collected from all other tokens.
+
+\textbf{Step 2: Add \& Norm} \\
+The attention output is added back to its input:
+\begin{equation}
+R_1 = X + H
+\end{equation}
+Layer Normalization is then applied:
+\begin{equation}
+Z = \text{LayerNorm}(R_1) \in \mathbb{R}^{n \times 512}
+\end{equation}
+The residual path preserves information from previous layers while normalization stabilizes optimization.
+
+\textbf{Step 3: Feed Forward Network} \\
+Each token independently passes through the same feed-forward network:
+\begin{align}
+F &= \text{FFN}(Z) \\
+\text{FFN}(x) &= W_2 \text{ReLU}(W_1 x + b_1) + b_2
+\end{align}
+First layer: $512 \to 2048$, Second layer: $2048 \to 512$. \\
+$Z \in \mathbb{R}^{n \times 512}$.
+
+\textbf{Step 4: Add \& Norm} \\
+A residual connection is applied:
+\begin{equation}
+R_2 = Z + F, \quad U = \text{LayerNorm}(R_2) \in \mathbb{R}^{n \times 512}
+\end{equation}
+This completes one encoder block.
+
+\textbf{3. Stacking Encoder Blocks:} \\
+The output of one encoder block immediately becomes the input of the next:
+\begin{equation}
+U^{(1)} \to U^{(2)} \to \dots \to U^{(6)}
+\end{equation}
+No block change tensor size $\in \mathbb{R}^{n \times 512}$.
+
+Each successive block refines the contextual representation by repeatedly combining global information through attention and non-linear feature transformations through the feed-forward network.
+
+\subsection{Encoder Output}
+After the sixth encoder block, the encoder produces:
+\begin{equation}
+U = \begin{bmatrix} u_1 \\ u_2 \\ \vdots \\ u_n \end{bmatrix} \in \mathbb{R}^{n \times 512}
+\end{equation}
+Each vector $u_i$ now is a contextual representation that encodes information about the entire input sequence. Every token representation has been updated through multiple rounds of self-attention, allowing it to capture long-range dependencies and global context.
+
+\section{Transformer Decoder}
+The decoder is responsible for generating the target sequence one token at a time. The encoder built contextual representations of the input. The decoder uses these representation to predict the next output token autoregressively. At each decoding step, it conditions its prediction on two sources of information.
+
+Consequently, the decoder learns the conditional probability distribution:
+\begin{equation}
+P(y_1, \dots, y_T \mid x_1, \dots, x_n) = \prod_{t=1}^T P(y_t \mid y_{<t}, X)
+\end{equation}
+$X$: the source sequence \\
+$y_{<t}$: all previously generated target tokens.
+
+Unlike the encoder, the decoder cannot process all target tokens independently during inference because each prediction depends on the previous ones.
+
+\subsection{Decoder Architecture}
+The original Transformer stacks $N = 6$ identical decoder block. Each block consists of: \\
+$\text{Masked Multi-Head Self-Attention} \longrightarrow \text{Add \& Norm} \longrightarrow \text{Encoder-Decoder Attention} \longrightarrow \text{Add \& Norm} \longrightarrow \text{Feed Forward Network} \longrightarrow \text{Add \& Norm}$.
+
+\subsection{Decoder Block Breakdown}
+\textbf{Step 1: Masked Multi-Head Self-Attention} \\
+Attention is computed as:
+\begin{equation}
+\text{Attention} = \text{Softmax}\left(\frac{Q K^T + M}{\sqrt{d_k}}\right) V
+\end{equation}
+
+Mask $M$:
+\begin{equation}
+\begin{bmatrix}
+0.31 & 0.36 & 0.55 & 0.02 & 0.3 \\
+0.25 & 0.13 & 0.21 & 0.01 & 0.17 \\
+0.26 & 0.23 & 0.35 & 0.01 & 0.22 \\
+0.01 & 0.04 & 0.07 & 0.0 & 0.02 \\
+0.14 & 0.13 & 0.20 & 0.01 & 0.12
+\end{bmatrix}
++
+\begin{bmatrix}
+0 & -\infty & -\infty & -\infty & -\infty \\
+0 & 0 & -\infty & -\infty & -\infty \\
+0 & 0 & 0 & -\infty & -\infty \\
+0 & 0 & 0 & 0 & -\infty \\
+0 & 0 & 0 & 0 & 0
+\end{bmatrix}
+=
+\begin{bmatrix}
+0.31 & -\infty & -\infty & -\infty & -\infty \\
+0.25 & 0.13 & -\infty & -\infty & -\infty \\
+0.26 & 0.23 & 0.35 & -\infty & -\infty \\
+0.01 & 0.04 & 0.07 & 0.0 & -\infty \\
+0.14 & 0.13 & 0.20 & 0.01 & 0.12
+\end{bmatrix}
+\end{equation}
+Thus, the token at position $i$ can only attend to itself and all previous, but never to future tokens.
+
+This masking mechanism prevents information leakage during training, ensuring that the decoder learns to predict the next token using only the previously generated content.
+
+* The reason for using $-\infty$: we want the masked positions to receive exactly zero attention probability after applying Softmax, e.g., $\text{Softmax}([2, 1, -\infty]) = [0.665, 0.335, 0]$.
+
+\textbf{Step 2: Add \& Norm} \\
+Residual connection: $R_1 = Y + H, \quad Z = \text{LayerNorm}(R_1) \in \mathbb{R}^{t \times 512}$.
+
+\textbf{Step 3: Encoder-Decoder Attention (Cross-Attention)} \\
+This is the only operation that connects the decoder to the encoder. Unlike self-attention, the queries originate from the decoder, and the keys and values originate from the encoder output:
+\begin{align}
+Q &= Z W_Q \\
+K &= U W_K \\
+V &= U W_V
+\end{align}
+The attention becomes: $\text{Attention}(Q, K, V) = \text{Softmax}\left(\frac{Q K^T}{\sqrt{d_k}}\right) V$. \\
+Output $C \in \mathbb{R}^{t \times 512}$ where $Q \in \mathbb{R}^{t \times 64}, K \in \mathbb{R}^{n \times 64}, V \in \mathbb{R}^{n \times 64}$ ($512/8 = 64$).
+
+Unlike self-attention, where each token attends to the target sequence itself, cross-attention enables every decoder position to retrieve the most relevant information from the encoded source sequence.
+
+\textbf{Step 4: Add \& Norm} \\
+The output of the cross-attention is combined with the residual connection:
+$R_2 = Z + C, \quad D_1 = \text{LayerNorm}(R_2) \in \mathbb{R}^{t \times 512}$.
+
+\textbf{Step 5: Feed Forward Network} \\
+Each decoder representation is independently transformed through the position-wise feed-forward network:
+\begin{equation}
+\text{FFN}(x) = W_2 \text{ReLU}(W_1 x + b_1) + b_2
+\end{equation}
+$512 \to 2048 \to 512$. Applied to the entire sequence: $t \times 512 \to t \times 2048 \to t \times 512$.
+
+\textbf{Step 6: Add \& Norm} \\
+The final residual connection is computed: $R_3 = \text{FFN} + R_2$, $D = \text{LayerNorm}(R_3)$. \\
+This is complete one decoder block.
+
+\subsection{Stacking Decoder Blocks and Prediction}
+\textbf{Stacking Decoder Blocks:} \\
+The Transformer stacks 6 decoder blocks:
+\begin{align}
+D^{(0)} &= Y \\
+D^{(\ell)} &= \text{Decoder Block}^{(\ell)}\left(D^{(\ell-1)}, U\right), \quad \ell = 1, \dots, 6
+\end{align}
+The encoder output is shared by every decoder block, while the decoder representation is progressively refined.
+
+\textbf{Final Decoder Output:} \\
+After the sixth decoder block, $D \in \mathbb{R}^{t \times 512}$. \\
+This matrix contains contextual representations of every generated target token, enriched by both the previously generated target sequence and the encoded source sequence. However, these vectors are not yet predicted words.
+
+To produce the final prediction, each decoder output vector is passed through a linear projection:
+\begin{equation}
+Z = D W_{voc} + b, \quad W_{voc} \in \mathbb{R}^{512 \times |V|}
+\end{equation}
+$|V|$ is the vocabulary size: vocabulary is the set of all tokens that the model knows and can predict.
+
+The resulting logits $Z \in \mathbb{R}^{t \times |V|}$ are converted into probabilities using $P = \text{Softmax}(Z)$. The token with the highest probability becomes the next generated token.
+
+\input{chapters/chapter05_1.tex}

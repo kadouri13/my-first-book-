@@ -1,0 +1,27 @@
+# LaTeX build and auxiliary files
+*.aux
+*.log
+*.toc
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.bak
+main.pdf
+preview_*.pdf
+
+
+# Python environment & cache
+.venv/
+__pycache__/
+*.pyc
+
+# System files
+Thumbs.db
+.DS_Store
+
+# Large archives and temporary folders
+archive_other_pdfs/
+out/
+tools/*.zip
+
